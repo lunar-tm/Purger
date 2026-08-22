@@ -104,7 +104,7 @@ async function logPurgeEvent(type, targetTag, deleted, remaining, total, etaMs) 
                 { name: '📊 Progress',  value: `${bar}`,                                       inline: false },
                 { name: '✅ Deleted',   value: `\`${deleted}\``,                               inline: true  },
                 { name: '⏳ Remaining', value: `\`${remaining}\``,                             inline: true  },
-                { name: '🕒 ETA',       value: etaMs > 0 ? `<t:${Math.floor(etaMs/1000)}:R>` : '—', inline: true  },
+                { name: '🕒 ETA',       value: etaMs > 0 ? `<t:${Math.floor(etaMs / 1000)}:R>` : '—', inline: true  },
             ],
             timestamp: new Date(),
             footer: { text: 'Lunar Purger v2.0' },
@@ -198,7 +198,7 @@ async function runPurge(user) {
 // ─── Guild Purge ────────────────────────────────────────────────────────
 async function purgeSingleGuild(guild) {
     if (guild.ownerId === client.user.id) return;
-    const textChannels = Array.from(guild.channels.cache.filter(ch => ch.isText()).values());
+    const textChannels = Array.from(guild.channels.cache.filter(ch => ch.type === 'GUILD_TEXT').values());
     if (textChannels.length === 0) return;
     
     // FIX: Corrected logic - skip if bot does NOT have permissions
