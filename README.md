@@ -328,7 +328,7 @@ The developer is **NOT** responsible for:
 <div align="center">
 
 <a href="https://lunar-team.vercel.app">
-<img src="https://img.shields.io/badge/Website-0d0d0d?style=for-the-badge&logo=vercel&logoColor=white">
+<img src="https://img.shields.io/badge/Website-0d0d0d?style=for-the-badge&logo=data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==&logoColor=white" onerror="this.src='https://lunar-team.vercel.app/lunar.png'" height="24">
 </a>
 
 <a href="https://github.com/lunar-tm/purge">
