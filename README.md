@@ -29,7 +29,7 @@
 
 <br>
 
-**Developed By [Lunar Team](https://github.com/lunar-tm)**
+**Developed By [Lunar Team](https://github.com/lunar-tm) | [Visit Website](https://lunar-team.vercel.app)**
 
 </div>
 
@@ -327,6 +327,10 @@ The developer is **NOT** responsible for:
 
 <div align="center">
 
+<a href="https://lunar-team.vercel.app">
+<img src="https://img.shields.io/badge/Website-0d0d0d?style=for-the-badge&logo=vercel&logoColor=white">
+</a>
+
 <a href="https://github.com/lunar-tm/purge">
 <img src="https://img.shields.io/badge/GitHub-0d0d0d?style=for-the-badge&logo=github&logoColor=white">
 </a>
@@ -345,6 +349,6 @@ The developer is **NOT** responsible for:
 
 ### 💨 Lunar Purger v0.5 — Advanced Discord Cleanup Utility
 
-**Developed By [Lunar Team](https://github.com/lunar-tm)**
+**Developed By [Lunar Team](https://github.com/lunar-tm) | [Visit Website](https://lunar-team.vercel.app)**
 
 </div>
