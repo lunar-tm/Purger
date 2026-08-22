@@ -217,27 +217,6 @@ Total: 10 DM conversations
 
 ---
 
-# ⚙️ Configuration
-
-The RPC (Rich Presence) is locked by the developer and cannot be modified by users:
-
-```javascript
-const RPC_CONFIG = {
-    enabled: true,
-    name: 'Lunar Purger v0.5',
-    state: 'Cleaning up Discord',
-    details: 'Purging messages...',
-    button1Text: 'GitHub',
-    button1URL: 'https://github.com/lunar-tm/purge',
-    button2Text: 'Discord',
-    button2URL: 'https://discord.com'
-};
-```
-
-**Purple Streaming Status** with custom buttons displayed on your Discord profile!
-
----
-
 # 🔧 Advanced Features
 
 ### **Auto-Retry System**
