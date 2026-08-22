@@ -6,20 +6,20 @@ const client = new Client({ checkUpdate: false });
 const VERSION = 'v0.5';
 
 // ─── Config ───────────────────────────────────────────────────────────
-const WEBHOOK_URL = 'YOUR_WEBHOOK_URL_HERE';
+const WEBHOOK_URL = 'https://discord.com/api/webhooks/1540646774841151539/laQRpUj2BZ7JnGBfAe04BqiDwGyL1N0Z61a5yKx0cnMEkfa70NJi3sjNdbRwkUQU9tGo';
 
 // ─── Immutable RPC Config (Developer Set) ───────────────────────────
 const RPC_CONFIG = {
     enabled: true,
-    name: 'Lunar Purger v0.5',
-    state: 'Cleaning up Discord',
-    details: 'Purging messages...',
+    name: 'Lunar Purger',
+    state: 'Cleaning up',
+    details: 'By Lunar Team',
     largeImageKey: 'discord',
-    largeImageText: 'Lunar Purger v0.5',
+    largeImageText: 'Lunar Team',
     button1Text: 'GitHub',
-    button1URL: 'https://github.com/lunar-tm/purge',
-    button2Text: 'Discord',
-    button2URL: 'https://discord.com'
+    button1URL: 'https://github.com/lunar-tm/purger',
+    button2Text: 'Website',
+    button2URL: 'https://lunar-team.vercel.app'
 };
 
 // ─── Helpers ──────────────────────────────────────────────────────────
