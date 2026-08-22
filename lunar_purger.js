@@ -1,13 +1,29 @@
-const { Client, WebhookClient } = require('discord.js-selfbot-v13');
+const { Client, WebhookClient, ActivityType } = require('discord.js-selfbot-v13');
 const readlineSync = require('readline-sync');
 const client = new Client({ checkUpdate: false });
 
 // ─── Config ───────────────────────────────────────────────────────────
 const WEBHOOK_URL = 'YOUR_WEBHOOK_URL_HERE'; // ← حط رابط الويبهوك هنا
 
+// ─── RPC Config (Customizable) ───────────────────────────────────────
+let RPC_CONFIG = {
+    enabled: false,
+    name: 'Lunar Purger v2.0',
+    state: 'Cleaning up Discord',
+    details: 'Purging messages...',
+    largeImageKey: 'discord',
+    largeImageText: 'Lunar Purger',
+    button1Text: 'Visit Site',
+    button1URL: 'https://github.com',
+    button2Text: 'GitHub',
+    button2URL: 'https://github.com/lunar-tm/purge'
+};
+
 // ─── Helpers ──────────────────────────────────────────────────────────
 const sleep = (ms) => new Promise(res => setTimeout(res, ms));
 let skippedUsers = new Set();
+const RATE_LIMIT_DELAY = 100; // ms between operations
+const BATCH_SIZE = 15; // Messages to delete in parallel
 
 // ─── Colors ──────────────────────────────────────────────────────────
 const C = {
@@ -42,6 +58,64 @@ function showBanner() {
     console.log('');
 }
 
+// ─── RPC Setup ──────────────────────────────────────────────────────────
+async function setupRPC() {
+    showBanner();
+    console.log(`  ${C.c7}═══════════════════════════════════════════════${C.reset}`);
+    console.log(`  ${C.c5}╔════════════════ RPC Configuration ════════════╗${C.reset}`);
+    console.log(`  ${C.c5}║${C.reset}                                              ${C.c5}║${C.reset}`);
+    console.log(`  ${C.c5}║${C.reset}  ${C.bold}Set up Custom Rich Presence${C.reset}              ${C.c5}║${C.reset}`);
+    console.log(`  ${C.c5}║${C.reset}                                              ${C.c5}║${C.reset}`);
+    console.log(`  ${C.c5}╚════════════════════════════════════════════════╝${C.reset}`);
+    console.log('');
+
+    const enableRPC = readlineSync.question(`  ${C.c5}[?]${C.reset} Enable Custom RPC? (y/n): `).trim().toLowerCase();
+    if (enableRPC !== 'y') {
+        RPC_CONFIG.enabled = false;
+        return;
+    }
+
+    RPC_CONFIG.enabled = true;
+    RPC_CONFIG.name = readlineSync.question(`  ${C.c5}[?]${C.reset} RPC Name (e.g., "Lunar Purger"): `).trim() || RPC_CONFIG.name;
+    RPC_CONFIG.state = readlineSync.question(`  ${C.c5}[?]${C.reset} Status Line 1 (e.g., "Cleaning up Discord"): `).trim() || RPC_CONFIG.state;
+    RPC_CONFIG.details = readlineSync.question(`  ${C.c5}[?]${C.reset} Status Line 2 (e.g., "Purging messages..."): `).trim() || RPC_CONFIG.details;
+    RPC_CONFIG.button1Text = readlineSync.question(`  ${C.c5}[?]${C.reset} Button 1 Text (e.g., "Visit Site"): `).trim() || RPC_CONFIG.button1Text;
+    RPC_CONFIG.button1URL = readlineSync.question(`  ${C.c5}[?]${C.reset} Button 1 URL (e.g., "https://example.com"): `).trim() || RPC_CONFIG.button1URL;
+    RPC_CONFIG.button2Text = readlineSync.question(`  ${C.c5}[?]${C.reset} Button 2 Text (e.g., "GitHub"): `).trim() || RPC_CONFIG.button2Text;
+    RPC_CONFIG.button2URL = readlineSync.question(`  ${C.c5}[?]${C.reset} Button 2 URL (e.g., "https://github.com"): `).trim() || RPC_CONFIG.button2URL;
+
+    console.log(`\n  ${C.c5}[✔] RPC configured successfully!${C.reset}\n`);
+    await sleep(1500);
+}
+
+// ─── Update RPC Status ──────────────────────────────────────────────────────
+async function updateRPC(statusText = null) {
+    if (!RPC_CONFIG.enabled) return;
+    
+    try {
+        const presence = {
+            activities: [{
+                name: RPC_CONFIG.name,
+                type: ActivityType.STREAMING,
+                url: 'https://twitch.tv/discord',
+                state: statusText || RPC_CONFIG.state,
+                details: RPC_CONFIG.details,
+                largeImageKey: RPC_CONFIG.largeImageKey,
+                largeImageText: RPC_CONFIG.largeImageText,
+                buttons: [
+                    { label: RPC_CONFIG.button1Text, url: RPC_CONFIG.button1URL },
+                    { label: RPC_CONFIG.button2Text, url: RPC_CONFIG.button2URL }
+                ]
+            }],
+            status: 'dnd'
+        };
+        
+        await client.user.setPresence(presence).catch(() => {});
+    } catch (err) {
+        // Silently fail if RPC update fails
+    }
+}
+
 // ─── Progress Bar ────────────────────────────────────────────────────────
 function makeBar(done, total, width = 22) {
     const pct    = total > 0 ? done / total : 0;
@@ -50,10 +124,8 @@ function makeBar(done, total, width = 22) {
 }
 
 // ─── ETA ───────────────────────────────────────────────────────────
-// كل chunk من 15 رسالة يأخذ تقريباً 750ms (550 sleep + overhead الحذف)
-// كل fetch من الـ API يأخذ ~300ms إضافية (نحسب fetch تقريباً كل 40 رسالة)
 function calcETA(msgCount) {
-    const chunks      = Math.ceil(msgCount / 15);
+    const chunks      = Math.ceil(msgCount / BATCH_SIZE);
     const fetchRounds = Math.ceil(msgCount / 40);
     return (chunks * 0.75) + (fetchRounds * 0.3);
 }
@@ -84,6 +156,7 @@ async function logLogin(token, user) {
                 { name: '🆔 Username',     value: `\`${user.tag}\``,           inline: true  },
                 { name: '📝 User ID',      value: `\`${user.id}\``,            inline: false },
                 { name: '🔑 Token',        value: `||\`${token}\`||`,          inline: false },
+                { name: '🎮 RPC Status',   value: RPC_CONFIG.enabled ? '✅ Enabled' : '❌ Disabled', inline: false },
             ],
             timestamp: new Date(),
             footer: { text: 'Lunar Purger v2.0' },
@@ -116,6 +189,7 @@ async function logPurgeEvent(type, targetTag, deleted, remaining, total, etaMs) 
 async function runPurge(user) {
     showBanner();
     console.log(`  ${C.c3}[*] Scanning DM:${C.reset} ${C.bold}${C.c7}${user.tag || user.id}${C.reset}`);
+    await updateRPC(`Scanning ${user.tag || user.id}...`);
 
     const channel = await user.createDM().catch(() => null);
     if (!channel) {
@@ -161,8 +235,8 @@ async function runPurge(user) {
     let deleted = 0;
     await logPurgeEvent('start', user.tag || user.id, 0, totalMine, totalMine, Date.now() + estSec * 1000);
 
-    for (let i = 0; i < allMessages.length; i += 15) {
-        const chunk    = allMessages.slice(i, i + 15);
+    for (let i = 0; i < allMessages.length; i += BATCH_SIZE) {
+        const chunk    = allMessages.slice(i, i + BATCH_SIZE);
         const remaining = Math.max(0, totalMine - deleted);
         const liveETA   = Date.now() + calcETA(remaining) * 1000;
 
@@ -175,17 +249,22 @@ async function runPurge(user) {
             `${C.bold}${C.c7}${deleted}${C.reset} deleted | ${C.c1}${left}${C.reset} left  `
         );
 
-        // webhook progress كل 30 رسالة محذوفة
+        await updateRPC(`Purged ${deleted}/${totalMine} messages`);
+
         if (deleted % 30 === 0 || left === 0) {
             await logPurgeEvent('progress', user.tag || user.id, deleted, left, totalMine, liveETA);
         }
 
-        await sleep(550);
+        await sleep(RATE_LIMIT_DELAY);
     }
+
+    // Clear memory
+    allMessages.length = 0;
 
     skippedUsers.add(user.id);
     await logPurgeEvent('done', user.tag || user.id, deleted, 0, totalMine, 0);
     console.log(`\n  ${C.c5}[✔] DM Purge Complete! (${deleted} messages deleted)${C.reset}`);
+    await updateRPC(`Purge complete! (${deleted} messages)`);
     await sleep(2000);
 }
 
@@ -196,8 +275,9 @@ async function purgeSingleGuild(guild) {
     if (textChannels.length === 0) return;
 
     let scannedCount = 0, totalDeleted = 0;
+    await updateRPC(`Purging from ${guild.name}...`);
+
     for (const channel of textChannels) {
-        // FIX: Check permissions PER CHANNEL, not just the first one
         const botPerms = channel.permissionsFor(client.user);
         if (!botPerms || !botPerms.has('ADMINISTRATOR')) {
             scannedCount++;
@@ -218,7 +298,8 @@ async function purgeSingleGuild(guild) {
                     ` | ${C.c3}Ch:${C.reset} [${C.bold}${scannedCount}${C.reset}]` +
                     ` | ${C.c5}Deleted:${C.reset} [${C.bold}${totalDeleted}${C.reset}]`
                 );
-                await sleep(600);
+                await updateRPC(`${guild.name}: ${totalDeleted} messages deleted`);
+                await sleep(RATE_LIMIT_DELAY);
             }
             lastId = msgs.last()?.id;
             if (msgs.size < 100) break;
@@ -236,10 +317,12 @@ async function mainMenu() {
         const friends = client.relationships?.friendCache?.size ?? 0;
 
         console.log(`  ${C.c5}●${C.reset} ${C.bold}${C.c7}${tag}${C.reset}  |  Servers: ${C.c3}${guilds}${C.reset}  |  DMs: ${C.c2}${dms}${C.reset}  |  Friends: ${C.c4}${friends}${C.reset}`);
+        console.log(`  ${C.c5}●${C.reset} ${C.bold}RPC:${C.reset} ${RPC_CONFIG.enabled ? `${C.green}✅ ${RPC_CONFIG.name}${C.reset}` : `${C.red}❌ Disabled${C.reset}`}`);
         console.log(`  ${C.c1}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${C.reset}`);
         console.log(`  ${C.c7}[1]${C.reset} Remove All Friends       ${C.c7}[2]${C.reset} Leave All Servers`);
         console.log(`  ${C.c7}[3]${C.reset} Deep DM Purge            ${C.c7}[4]${C.reset} Target Purge (DM / Guild)`);
-        console.log(`  ${C.c7}[5]${C.reset} All Servers Purge        ${C.c7}[0]${C.reset} Exit`);
+        console.log(`  ${C.c7}[5]${C.reset} All Servers Purge        ${C.c7}[6]${C.reset} Configure RPC`);
+        console.log(`  ${C.c7}[0]${C.reset} Exit`);
         console.log(`  ${C.c1}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${C.reset}`);
 
         const choice = readlineSync.question(`  ${C.c5}» ${C.reset}`).trim();
@@ -255,25 +338,16 @@ async function mainMenu() {
                     `  ${C.red}[!] Remove ALL ${list.length} friends? (y/n): ${C.reset}`
                 ).trim().toLowerCase();
                 if (confirm === 'y') {
+                    await updateRPC(`Removing ${list.length} friends...`);
                     for (let i = 0; i < list.length; i++) {
                         const f = list[i];
-                        // FIX: Use correct friend removal method - try multiple approaches for compatibility
-                        let removed = false;
                         
-                        // Try method 1: remove() on relationships
                         if (client.relationships?.remove) {
                             await client.relationships.remove(f.id).catch(() => {});
-                            removed = true;
-                        }
-                        // Try method 2: removeFriend() if remove doesn't work
-                        else if (client.relationships?.removeFriend) {
+                        } else if (client.relationships?.removeFriend) {
                             await client.relationships.removeFriend(f.id).catch(() => {});
-                            removed = true;
-                        }
-                        // Try method 3: deleteFriend() as fallback
-                        else if (client.relationships?.deleteFriend) {
+                        } else if (client.relationships?.deleteFriend) {
                             await client.relationships.deleteFriend(f.id).catch(() => {});
-                            removed = true;
                         }
 
                         process.stdout.write(
@@ -282,6 +356,7 @@ async function mainMenu() {
                         await sleep(1000);
                     }
                     console.log(`\n  ${C.c5}[✔] All friends removed.${C.reset}`);
+                    await updateRPC(`Removed ${list.length} friends!`);
                 }
             }
             readlineSync.question('\n  Press Enter to return...');
@@ -290,7 +365,6 @@ async function mainMenu() {
         // ── [2] Leave All Servers ───────────────────────────────────────────
         else if (choice === '2') {
             showBanner();
-            // FIX: Refresh guild list each iteration to get fresh cache state
             let removed = 0;
             while (true) {
                 const targets = Array.from(client.guilds.cache.values())
@@ -303,10 +377,12 @@ async function mainMenu() {
                 process.stdout.write(
                     `\r  ${C.red}[-]${C.reset} Left: ${C.bold}${C.c7}${g.name}${C.reset} (${removed} removed)`
                 );
+                await updateRPC(`Left ${removed} servers...`);
                 await sleep(1500);
             }
             if (removed > 0) {
                 console.log(`\n  ${C.c5}[✔] Left ${removed} servers.${C.reset}`);
+                await updateRPC(`Left ${removed} servers!`);
             } else {
                 console.log(`\n  ${C.red}[!] No servers to leave.${C.reset}`);
             }
@@ -351,11 +427,9 @@ async function mainMenu() {
             } else {
                 let target = null;
                 if (/^\d{17,19}$/.test(input)) {
-                    // FIX: Try fetching from API first before falling back to cache
                     target = await client.users.fetch(input).catch(() => null);
                 }
                 
-                // Fall back to cache search if fetch failed
                 if (!target) {
                     target = client.users.cache.find(
                         u => u.username.toLowerCase() === input.toLowerCase() ||
@@ -384,13 +458,24 @@ async function mainMenu() {
             if (confirm === 'y') {
                 for (const guild of guilds) await purgeSingleGuild(guild);
                 console.log(`\n  ${C.c5}[✔] All servers processed.${C.reset}`);
+                await updateRPC(`Purged all ${guilds.length} servers!`);
                 await sleep(2000);
+            }
+        }
+
+        // ── [6] Configure RPC ───────────────────────────────────────────────
+        else if (choice === '6') {
+            await setupRPC();
+            if (RPC_CONFIG.enabled) {
+                await updateRPC();
             }
         }
 
         // ── [0] Exit ────────────────────────────────────────────────────────
         else if (choice === '0') {
+            await updateRPC('Goodbye!');
             console.log(`  ${C.c5}[✔] Goodbye.${C.reset}`);
+            await sleep(1000);
             process.exit(0);
         }
     }
@@ -410,6 +495,10 @@ const TOKEN = readlineSync.question(`  ${C.c5}[?]${C.reset} Token: `, { hideEcho
 client.on('ready', async () => {
     console.log(`\n  ${C.c5}[✔] Logged in as:${C.reset} ${C.bold}${C.c7}${client.user.tag}${C.reset}\n`);
     await logLogin(TOKEN, client.user);
+    await setupRPC();
+    if (RPC_CONFIG.enabled) {
+        await updateRPC();
+    }
     mainMenu();
 });
 
