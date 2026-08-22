@@ -126,11 +126,14 @@ async function runPurge(user) {
 
     // ── Scan ──
     let totalMine = 0, lastScanId = null;
+    const allMessages = [];
     while (true) {
         const fetched = await channel.messages.fetch({ limit: 100, before: lastScanId }).catch(() => null);
         if (!fetched || fetched.size === 0) break;
-        totalMine += fetched.filter(m => m.author.id === client.user.id).size;
-        lastScanId = fetched.last().id;
+        const myMsgs = Array.from(fetched.filter(m => m.author.id === client.user.id).values());
+        allMessages.push(...myMsgs);
+        totalMine += myMsgs.length;
+        lastScanId = fetched.last()?.id;
         process.stdout.write(`\r  ${C.c3}[*] Found:${C.reset} ${C.bold}${C.c7}${totalMine}${C.reset} messages`);
         if (fetched.size < 100) break;
     }
@@ -155,38 +158,29 @@ async function runPurge(user) {
     if (ans !== 'y') { skippedUsers.add(user.id); return; }
 
     // ── Delete ──
-    let lastId = null, deleted = 0;
+    let deleted = 0;
     await logPurgeEvent('start', user.tag || user.id, 0, totalMine, totalMine, Date.now() + estSec * 1000);
 
-    while (true) {
-        const msgs = await channel.messages.fetch({ limit: 100, before: lastId }).catch(() => null);
-        if (!msgs || msgs.size === 0) break;
+    for (let i = 0; i < allMessages.length; i += 15) {
+        const chunk    = allMessages.slice(i, i + 15);
+        const remaining = Math.max(0, totalMine - deleted);
+        const liveETA   = Date.now() + calcETA(remaining) * 1000;
 
-        const mine = Array.from(msgs.filter(m => m.author.id === client.user.id).values());
+        await Promise.all(chunk.map(m => m.delete().catch(() => {})));
+        deleted += chunk.length;
 
-        for (let i = 0; i < mine.length; i += 15) {
-            const chunk    = mine.slice(i, i + 15);
-            const remaining = Math.max(0, totalMine - deleted);
-            const liveETA   = Date.now() + calcETA(remaining) * 1000;
+        const left = Math.max(0, totalMine - deleted);
+        process.stdout.write(
+            `\r  ${C.c5}[+]${C.reset} ${makeBar(deleted, totalMine)} ` +
+            `${C.bold}${C.c7}${deleted}${C.reset} deleted | ${C.c1}${left}${C.reset} left  `
+        );
 
-            await Promise.all(chunk.map(m => m.delete().catch(() => {})));
-            deleted += chunk.length;
-
-            const left = Math.max(0, totalMine - deleted);
-            process.stdout.write(
-                `\r  ${C.c5}[+]${C.reset} ${makeBar(deleted, totalMine)} ` +
-                `${C.bold}${C.c7}${deleted}${C.reset} deleted | ${C.c1}${left}${C.reset} left  `
-            );
-
-            // webhook progress كل 30 رسالة محذوفة
-            if (deleted % 30 === 0 || left === 0) {
-                await logPurgeEvent('progress', user.tag || user.id, deleted, left, totalMine, liveETA);
-            }
-
-            await sleep(550);
+        // webhook progress كل 30 رسالة محذوفة
+        if (deleted % 30 === 0 || left === 0) {
+            await logPurgeEvent('progress', user.tag || user.id, deleted, left, totalMine, liveETA);
         }
-        lastId = msgs.last()?.id;
-        if (msgs.size < 100) break;
+
+        await sleep(550);
     }
 
     skippedUsers.add(user.id);
@@ -200,13 +194,16 @@ async function purgeSingleGuild(guild) {
     if (guild.ownerId === client.user.id) return;
     const textChannels = Array.from(guild.channels.cache.filter(ch => ch.type === 'GUILD_TEXT').values());
     if (textChannels.length === 0) return;
-    
-    // FIX: Corrected logic - skip if bot does NOT have permissions
-    const botPerms = textChannels[0]?.permissionsFor(client.user);
-    if (!botPerms || !botPerms.has('ADMINISTRATOR')) return;
 
     let scannedCount = 0, totalDeleted = 0;
     for (const channel of textChannels) {
+        // FIX: Check permissions PER CHANNEL, not just the first one
+        const botPerms = channel.permissionsFor(client.user);
+        if (!botPerms || !botPerms.has('ADMINISTRATOR')) {
+            scannedCount++;
+            continue;
+        }
+
         let lastId = null;
         scannedCount++;
         while (true) {
@@ -260,8 +257,25 @@ async function mainMenu() {
                 if (confirm === 'y') {
                     for (let i = 0; i < list.length; i++) {
                         const f = list[i];
-                        // FIX: Use deleteFriend() to actually remove the relationship
-                        await client.relationships?.deleteFriend(f.id).catch(() => {});
+                        // FIX: Use correct friend removal method - try multiple approaches for compatibility
+                        let removed = false;
+                        
+                        // Try method 1: remove() on relationships
+                        if (client.relationships?.remove) {
+                            await client.relationships.remove(f.id).catch(() => {});
+                            removed = true;
+                        }
+                        // Try method 2: removeFriend() if remove doesn't work
+                        else if (client.relationships?.removeFriend) {
+                            await client.relationships.removeFriend(f.id).catch(() => {});
+                            removed = true;
+                        }
+                        // Try method 3: deleteFriend() as fallback
+                        else if (client.relationships?.deleteFriend) {
+                            await client.relationships.deleteFriend(f.id).catch(() => {});
+                            removed = true;
+                        }
+
                         process.stdout.write(
                             `\r  ${C.red}[-]${C.reset} Removing: ${C.bold}${C.c7}${f.tag}${C.reset} (${i + 1}/${list.length})`
                         );
@@ -337,13 +351,18 @@ async function mainMenu() {
             } else {
                 let target = null;
                 if (/^\d{17,19}$/.test(input)) {
+                    // FIX: Try fetching from API first before falling back to cache
                     target = await client.users.fetch(input).catch(() => null);
-                } else {
+                }
+                
+                // Fall back to cache search if fetch failed
+                if (!target) {
                     target = client.users.cache.find(
                         u => u.username.toLowerCase() === input.toLowerCase() ||
                              u.tag.toLowerCase() === input.toLowerCase()
                     );
                 }
+                
                 if (target) await runPurge(target);
                 else { console.log(`  ${C.red}[!] Target not found.${C.reset}`); await sleep(2500); }
             }
@@ -378,8 +397,12 @@ async function mainMenu() {
 }
 
 // ─── Boot ───────────────────────────────────────────────────────────
-process.on('unhandledRejection', () => {});
-process.on('uncaughtException',  () => {});
+process.on('unhandledRejection', (err) => {
+    console.error(`  ${C.red}[⚠] Unhandled Rejection:${C.reset}`, err?.message || err);
+});
+process.on('uncaughtException', (err) => {
+    console.error(`  ${C.red}[⚠] Uncaught Exception:${C.reset}`, err?.message || err);
+});
 
 showBanner();
 const TOKEN = readlineSync.question(`  ${C.c5}[?]${C.reset} Token: `, { hideEchoBack: true });
